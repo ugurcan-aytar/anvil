@@ -16,6 +16,22 @@ func Execute() error {
 func init() {
 	rootCmd.PersistentFlags().StringVar(&projectDir, "project", ".", "project directory (contains raw/, wiki/, ANVIL.md)")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colorized output")
+	rootCmd.PersistentFlags().BoolVarP(&verboseFlag, "verbose", "v", false, "extra output: LLM prompt/response snippets + timing")
+	rootCmd.PersistentFlags().BoolVarP(&quietFlag, "quiet", "q", false, "only print summary + errors (overrides --verbose)")
+
+	// Cobra's PersistentPreRun runs before every subcommand's RunE,
+	// so it's the right seam for resolving the verbosity level
+	// from the two mutually-exclusive flags.
+	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		switch {
+		case quietFlag:
+			verbosity = VerbosityQuiet
+		case verboseFlag:
+			verbosity = VerbosityVerbose
+		default:
+			verbosity = VerbosityNormal
+		}
+	}
 
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(ingestCmd)
@@ -27,6 +43,16 @@ func init() {
 	rootCmd.AddCommand(versionCmd)
 }
 
+// Verbosity levels. Subcommands read `verbosity` (set by
+// PersistentPreRun) to decide what to print.
+type Verbosity int
+
+const (
+	VerbosityQuiet   Verbosity = 0
+	VerbosityNormal  Verbosity = 1
+	VerbosityVerbose Verbosity = 2
+)
+
 var (
 	// projectDir is the --project flag value; subcommands read it to
 	// locate raw/, wiki/, ANVIL.md, and .anvil/index.db. "." means
@@ -36,4 +62,13 @@ var (
 	// noColor mirrors the convention the sibling recall + brain CLIs
 	// use. Subcommands consult it before emitting ANSI.
 	noColor bool
+	// verboseFlag / quietFlag are the raw bool values; resolve into
+	// `verbosity` via PersistentPreRun. Tests that need to override
+	// assign to verbosity directly — they bypass the flag layer.
+	verboseFlag bool
+	quietFlag   bool
+	// verbosity is the resolved output level every subcommand reads.
+	// Default is VerbosityNormal; PersistentPreRun flips it based on
+	// --quiet / --verbose.
+	verbosity = VerbosityNormal
 )
