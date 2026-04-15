@@ -65,6 +65,15 @@ type Page struct {
 // and the body. Standard in Obsidian, Jekyll, Hugo; anvil matches.
 const frontmatterDelim = "---"
 
+// ParsePage parses raw markdown bytes into a Page struct. The public
+// wrapper exists so packages that receive on-the-wire markdown from
+// the LLM (e.g. the ingest writer stage) can round-trip through the
+// same frontmatter parser ReadPage uses, without needing to write
+// the bytes to disk first.
+func ParsePage(raw []byte) (*Page, error) {
+	return parsePage(raw)
+}
+
 // ReadPage parses a wiki markdown file. Returns an error if the file
 // is missing, if the frontmatter is malformed, or if the file is a
 // reserved name (index.md / log.md — those aren't pages).
