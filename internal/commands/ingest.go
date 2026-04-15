@@ -90,14 +90,30 @@ func runIngest(ctx context.Context, args []string, opts ingestOptions) error {
 		}
 		return err
 	}
-	fmt.Printf("LLM backend: %s\n", client.Describe())
+	client = wrapClient(client) // --verbose decorator (no-op otherwise)
+	if verbosity >= VerbosityNormal {
+		fmt.Printf("LLM backend: %s\n", client.Describe())
+	}
 
 	dbPath := eng.DBPath()
 	wikiDir := eng.WikiDir()
 
+	// Batch banner — only useful when the user pointed ingest at
+	// more than a single file.
+	batchStart := time.Now()
+	if verbosity >= VerbosityNormal && len(files) > 1 {
+		fmt.Printf("Ingesting %d files from %v...\n\n", len(files), args)
+	}
+	// Padding width so "[  1/95]" lines up with "[ 95/95]".
+	padWidth := len(fmt.Sprintf("%d", len(files)))
+	counterFmt := fmt.Sprintf("[%%%dd/%%d] ", padWidth)
+
 	summary := ingestSummary{}
-	for _, relPath := range files {
+	for i, relPath := range files {
 		absPath := filepath.Join(eng.ProjectRoot(), relPath)
+		if verbosity >= VerbosityNormal {
+			fmt.Printf(counterFmt, i+1, len(files))
+		}
 		if err := ingestOne(ctx, client, dbPath, wikiDir, relPath, absPath, opts, &summary); err != nil {
 			// Per-file error: print and keep going so a single
 			// malformed source doesn't abort the batch.
@@ -105,6 +121,7 @@ func runIngest(ctx context.Context, args []string, opts ingestOptions) error {
 			summary.Errors++
 		}
 	}
+	batchElapsed := time.Since(batchStart).Round(time.Second)
 
 	// Refresh the on-disk index + BM25 tables so `anvil status` /
 	// `anvil search` reflect the ingest. Cheap; no reason to skip.
@@ -130,10 +147,13 @@ func runIngest(ctx context.Context, args []string, opts ingestOptions) error {
 	}
 
 	fmt.Println()
-	fmt.Printf("Summary: %d files processed, %d skipped, %d pages created, %d updated",
+	fmt.Printf("Summary: %d files, %d skipped, %d created, %d updated",
 		summary.Processed, summary.Skipped, summary.Created, summary.Updated)
 	if summary.Errors > 0 {
 		fmt.Printf(", %d error(s)", summary.Errors)
+	}
+	if len(files) > 1 {
+		fmt.Printf(" (%s total)", batchElapsed)
 	}
 	fmt.Println()
 	return nil
@@ -173,12 +193,16 @@ func ingestOne(
 			return fmt.Errorf("cache check: %w", err)
 		}
 		if already {
-			fmt.Printf("Skipping %s (unchanged since last ingest)\n", relPath)
+			if verbosity >= VerbosityNormal {
+				fmt.Printf("%s ... skipped (unchanged)\n", relPath)
+			}
 			summary.Skipped++
 			return nil
 		}
 	}
-	fmt.Printf("Processing %s...\n", relPath)
+	if verbosity >= VerbosityNormal {
+		fmt.Printf("%s ... ", relPath)
+	}
 	started := time.Now()
 
 	// Feed the current slug catalog to the LLM so it re-uses
@@ -200,7 +224,7 @@ func ingestOne(
 	if err != nil {
 		return fmt.Errorf("extract: %w", err)
 	}
-	fmt.Printf("  Extracted: %d entities, %d concepts, %d claims\n",
+	printVerbose("  extracted: %d entities, %d concepts, %d claims\n",
 		len(extraction.Entities), len(extraction.Concepts), len(extraction.Claims))
 
 	reconciled, err := ingest.Reconcile(extraction, wikiDir, relPath)
@@ -209,8 +233,11 @@ func ingestOne(
 	}
 
 	if opts.DryRun {
-		fmt.Printf("  [dry-run] would create %d page(s), update %d\n",
-			len(reconciled.Create), len(reconciled.Update))
+		if verbosity >= VerbosityNormal {
+			fmt.Printf("[dry-run] %d create / %d update (%s)\n",
+				len(reconciled.Create), len(reconciled.Update),
+				truncDur(time.Since(started)))
+		}
 		summary.Processed++
 		return nil
 	}
@@ -218,12 +245,6 @@ func ingestOne(
 	report := ingest.Write(ctx, client, reconciled, wikiDir, time.Now())
 	for _, werr := range report.Errors {
 		fmt.Fprintf(os.Stderr, "  ! write: %v\n", werr)
-	}
-	if len(report.Created) > 0 {
-		fmt.Printf("  Created: %s\n", joinWithWikiPrefix(report.Created))
-	}
-	if len(report.Updated) > 0 {
-		fmt.Printf("  Updated: %s\n", joinWithWikiPrefix(report.Updated))
 	}
 	summary.Created += len(report.Created)
 	summary.Updated += len(report.Updated)
@@ -244,7 +265,13 @@ func ingestOne(
 		fmt.Fprintf(os.Stderr, "  ! append log: %v\n", err)
 	}
 
-	fmt.Printf("  Done (%s)\n", truncDur(time.Since(started)))
+	if verbosity >= VerbosityNormal {
+		fmt.Printf("%d created, %d updated (%s)\n",
+			len(report.Created), len(report.Updated),
+			truncDur(time.Since(started)))
+	}
+	printVerbose("  created: %s\n", strings.Join(report.Created, ", "))
+	printVerbose("  updated: %s\n", strings.Join(report.Updated, ", "))
 	return nil
 }
 

@@ -191,7 +191,7 @@ func TestIngestSkipsUnchangedSource(t *testing.T) {
 	if len(client2.Calls) != 0 {
 		t.Errorf("re-ingest with unchanged file should make 0 LLM calls, got %d", len(client2.Calls))
 	}
-	if !strings.Contains(out, "Skipping") {
+	if !strings.Contains(out, "skipped (unchanged)") {
 		t.Errorf("expected 'Skipping' in output; got:\n%s", out)
 	}
 }

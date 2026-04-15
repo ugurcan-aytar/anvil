@@ -138,7 +138,7 @@ func TestE2EIngestSkipsUnchangedContent(t *testing.T) {
 	if len(client.Calls) != 0 {
 		t.Errorf("unchanged re-ingest should skip LLM; got %d calls", len(client.Calls))
 	}
-	if !strings.Contains(out, "Skipping") {
+	if !strings.Contains(out, "skipped (unchanged)") {
 		t.Errorf("expected 'Skipping' output; got:\n%s", out)
 	}
 }
