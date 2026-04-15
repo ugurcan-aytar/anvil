@@ -14,6 +14,13 @@ type Source struct {
 	// Content is the text body fed to the LLM. Any YAML frontmatter
 	// on the source has already been stripped by the reader.
 	Content string
+	// ExistingSlugs is the current wiki's slug catalog (filename
+	// stems, no .md suffix). Fed to the extract prompt so the LLM
+	// uses canonical slug forms instead of inventing variants —
+	// e.g. "nocodedevs" stays "nocodedevs" across ingests rather
+	// than drifting into "nocode-devs". Safe to leave nil on a
+	// fresh wiki; the prompt template skips the section.
+	ExistingSlugs []string
 }
 
 // Entity is a person, company, tool, or project named in the source.

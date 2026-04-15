@@ -12,9 +12,11 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/ugurcan-aytar/recall/pkg/recall"
 )
@@ -36,9 +38,17 @@ const (
 
 // Engine wraps *recall.Engine alongside the project root so commands
 // can reach for raw/ and wiki/ paths without re-deriving them.
+//
+// The embedder is lazily resolved — BM25-only paths (status, lint
+// --structural-only, raw search) don't pay the GGUF load / API
+// construction cost. See Embedder() for the resolution rules.
 type Engine struct {
 	rcl         *recall.Engine
 	projectRoot string
+
+	embOnce sync.Once
+	emb     recall.Embedder
+	embErr  error
 }
 
 // Open creates (or opens) the project's recall engine at
@@ -95,12 +105,65 @@ func (e *Engine) DBPath() string {
 	return filepath.Join(e.projectRoot, DBSubdir, DBFilename)
 }
 
-// Close releases the recall engine. Safe to call multiple times.
+// Embedder returns the active embedder, constructed on the first
+// call. Copies brain's lazy-resolution pattern: we only pay for
+// model load or API client construction when a caller actually
+// needs embeddings.
+//
+// Returns (nil, nil) when embedding isn't configured and the
+// failure is a graceful fallback case — e.g. the default build
+// (no embed_llama tag) with no RECALL_EMBED_PROVIDER set. Callers
+// pass a nil Embedder to recall.SearchHybrid and recall degrades
+// to BM25 cleanly.
+//
+// Returns (nil, err) for misconfiguration the user should know
+// about — e.g. RECALL_EMBED_PROVIDER=openai without OPENAI_API_KEY.
+func (e *Engine) Embedder() (recall.Embedder, error) {
+	if e == nil {
+		return nil, fmt.Errorf("engine: nil receiver")
+	}
+	e.embOnce.Do(func() {
+		emb, err := recall.ResolveEmbedder()
+		if err != nil {
+			// Graceful case: no-op when local isn't compiled in
+			// AND the user hasn't opted into an API backend.
+			if errors.Is(err, recall.ErrLocalEmbedderNotCompiled) &&
+				recall.ResolveAPIProvider() == recall.ProviderLocal {
+				return
+			}
+			e.embErr = err
+			return
+		}
+		e.emb = emb
+	})
+	return e.emb, e.embErr
+}
+
+// SetEmbedder overrides the lazy-resolved embedder. Used by tests
+// to inject recall.MockEmbedder without going through the env-driven
+// factory. Must be called before the first Embedder() call.
+func (e *Engine) SetEmbedder(emb recall.Embedder) {
+	if e == nil {
+		return
+	}
+	e.embOnce.Do(func() { e.emb = emb })
+}
+
+// Close releases the embedder (if constructed) and the recall
+// engine. Safe to call multiple times.
 func (e *Engine) Close() error {
 	if e == nil || e.rcl == nil {
 		return nil
 	}
-	return e.rcl.Close()
+	var embErr error
+	if e.emb != nil {
+		embErr = e.emb.Close()
+	}
+	rErr := e.rcl.Close()
+	if embErr != nil {
+		return embErr
+	}
+	return rErr
 }
 
 // ensureProject verifies projectRoot looks like an initialised anvil

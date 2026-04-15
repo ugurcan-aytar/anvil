@@ -44,8 +44,23 @@ func Write(ctx context.Context, client llm.Client, result *ReconcileResult, wiki
 		dateStr = time.Now().Format("2006-01-02")
 	}
 
+	// Load the slug catalog once so every page in this batch sees
+	// the same vocabulary. The catalog does NOT update as new pages
+	// land during the batch — that's deliberate: forking the
+	// catalog per draft would be O(N²) disk reads and bring little
+	// benefit since the cross-page references within a single
+	// source tend to use the draft slugs the LLM already knows.
+	cat, err := LoadSlugCatalog(wikiDir)
+	if err != nil {
+		report.Errors = append(report.Errors, fmt.Errorf("slug catalog: %w", err))
+		// Non-fatal — fall through with a nil catalog; the prompt
+		// block renders empty, matching the fresh-wiki behaviour.
+		cat = nil
+	}
+	existingSlugs := cat.Slugs()
+
 	for _, draft := range result.Create {
-		slug, err := writeCreate(ctx, client, draft, wikiDir, dateStr)
+		slug, err := writeCreate(ctx, client, draft, wikiDir, dateStr, existingSlugs)
 		if err != nil {
 			report.Errors = append(report.Errors, fmt.Errorf("create %s: %w", draft.Slug, err))
 			continue
@@ -53,7 +68,7 @@ func Write(ctx context.Context, client llm.Client, result *ReconcileResult, wiki
 		report.Created = append(report.Created, slug)
 	}
 	for _, upd := range result.Update {
-		slug, err := writeUpdate(ctx, client, upd, wikiDir, dateStr)
+		slug, err := writeUpdate(ctx, client, upd, wikiDir, dateStr, existingSlugs)
 		if err != nil {
 			report.Errors = append(report.Errors, fmt.Errorf("update %s: %w", upd.Slug, err))
 			continue
@@ -67,15 +82,16 @@ func Write(ctx context.Context, client llm.Client, result *ReconcileResult, wiki
 // prompt, sends it to the LLM, parses the returned markdown, fills
 // in any frontmatter the LLM forgot, persists, and appends a row to
 // wiki/index.md.
-func writeCreate(ctx context.Context, client llm.Client, draft PageDraft, wikiDir, dateStr string) (string, error) {
+func writeCreate(ctx context.Context, client llm.Client, draft PageDraft, wikiDir, dateStr string, existingSlugs []string) (string, error) {
 	prompt, err := RenderWritePrompt(WriteContext{
-		Slug:        draft.Slug,
-		Name:        draft.Name,
-		Type:        draft.Type,
-		Description: draft.Description,
-		Claims:      renderClaimsBullets(draft.Claims),
-		Connections: renderConnectionsBullets(draft.Connections),
-		SourcePath:  draft.SourcePath,
+		Slug:          draft.Slug,
+		Name:          draft.Name,
+		Type:          draft.Type,
+		Description:   draft.Description,
+		Claims:        renderClaimsBullets(draft.Claims),
+		Connections:   renderConnectionsBullets(draft.Connections),
+		SourcePath:    draft.SourcePath,
+		ExistingSlugs: existingSlugs,
 	})
 	if err != nil {
 		return "", fmt.Errorf("render write prompt: %w", err)
@@ -103,15 +119,16 @@ func writeCreate(ctx context.Context, client llm.Client, draft PageDraft, wikiDi
 // frontmatter + body), runs the update prompt, overlays the LLM's
 // returned page onto the existing one (so any LLM-dropped fields
 // survive), and persists.
-func writeUpdate(ctx context.Context, client llm.Client, upd PageUpdate, wikiDir, dateStr string) (string, error) {
+func writeUpdate(ctx context.Context, client llm.Client, upd PageUpdate, wikiDir, dateStr string, existingSlugs []string) (string, error) {
 	existingMD, err := serialisePageForPrompt(upd.Existing)
 	if err != nil {
 		return "", fmt.Errorf("serialise existing page: %w", err)
 	}
 	prompt, err := RenderUpdatePrompt(UpdateContext{
-		ExistingPage: existingMD,
-		NewInfo:      upd.NewInfo,
-		SourcePath:   upd.SourcePath,
+		ExistingPage:  existingMD,
+		NewInfo:       upd.NewInfo,
+		SourcePath:    upd.SourcePath,
+		ExistingSlugs: existingSlugs,
 	})
 	if err != nil {
 		return "", fmt.Errorf("render update prompt: %w", err)

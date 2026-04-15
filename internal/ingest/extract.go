@@ -37,9 +37,10 @@ func Extract(ctx context.Context, client llm.Client, source Source) (*Extraction
 	}
 
 	prompt, err := RenderExtractPrompt(ExtractContext{
-		Title:   source.Title,
-		Path:    source.Path,
-		Content: maybeTruncate(source.Content),
+		Title:         source.Title,
+		Path:          source.Path,
+		Content:       maybeTruncate(source.Content),
+		ExistingSlugs: source.ExistingSlugs,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("render extract prompt: %w", err)

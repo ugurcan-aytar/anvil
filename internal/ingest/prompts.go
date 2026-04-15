@@ -25,36 +25,52 @@ import (
 // ExtractContext feeds the extract prompt. Title is the source
 // filename's stem (or first H1 if the source has one), Path is the
 // path relative to the project root, Content is the source body with
-// any frontmatter stripped.
+// any frontmatter stripped. ExistingSlugs lets the LLM re-use the
+// canonical wiki vocabulary instead of inventing new slug variants
+// (e.g. "nocode-devs" when "nocodedevs" already exists).
 type ExtractContext struct {
-	Title   string
-	Path    string
-	Content string
+	Title         string
+	Path          string
+	Content       string
+	ExistingSlugs []string
 }
 
 // WriteContext feeds the "author this page" prompt used when a new
 // entity/concept is being created. Claims and Connections are
 // pre-rendered as bullet lists by the writer — passing structured
 // slices here would invite template surgery later; strings keep the
-// rendering boundary in Go where it belongs.
+// rendering boundary in Go where it belongs. ExistingSlugs same as
+// ExtractContext — ensures [[wikilinks]] land on canonical slugs.
 type WriteContext struct {
-	Slug        string
-	Name        string
-	Type        string
-	Description string
-	Claims      string
-	Connections string
-	SourcePath  string
+	Slug          string
+	Name          string
+	Type          string
+	Description   string
+	Claims        string
+	Connections   string
+	SourcePath    string
+	ExistingSlugs []string
 }
 
 // UpdateContext feeds the "merge new info into existing page"
 // prompt. ExistingPage is the full on-disk markdown (frontmatter
 // included) so the LLM can preserve fields it doesn't need to edit.
 type UpdateContext struct {
-	ExistingPage string
-	NewInfo      string
-	SourcePath   string
+	ExistingPage  string
+	NewInfo       string
+	SourcePath    string
+	ExistingSlugs []string
 }
+
+// slugCatalogBlock is reused across every prompt that accepts an
+// ExistingSlugs list. Rendered as a bulleted list when slugs are
+// present, skipped entirely when the wiki is empty.
+const slugCatalogBlock = `{{if .ExistingSlugs}}
+Existing wiki pages (use these EXACT slugs when referring to them):
+{{range .ExistingSlugs}}- {{.}}
+{{end}}
+IMPORTANT: When an entity or concept matches one of the slugs above, use the canonical slug verbatim. Do NOT invent alternative spellings (e.g. if "nocodedevs" exists, do NOT write "nocode-devs" or "no-code-devs").
+{{end}}`
 
 // extractTemplate is the "extract structure from source" prompt. The
 // YAML-only response format is strict on purpose — the parser in
@@ -86,7 +102,7 @@ connections:
 ` + "```" + `
 
 Leave a section with an empty list (` + "`entities: []`" + `) when nothing fits. Do NOT invent content that is not in the source. Do NOT write prose outside the code block.
-
+` + slugCatalogBlock + `
 Source document title: {{.Title}}
 Source document path: {{.Path}}
 
@@ -107,7 +123,7 @@ Rules:
 - Keep the page concise. One page per concept, not a book chapter.
 - Do NOT wrap the output in a code fence. Return the raw markdown.
 - Filename will be: {{.Slug}}
-
+` + slugCatalogBlock + `
 Entity/concept: {{.Name}}
 Type: {{.Type}}
 Description: {{.Description}}
@@ -135,7 +151,7 @@ Rules:
 - If the new information CONTRADICTS existing content, do NOT silently overwrite. Flag it explicitly in the body: "⚠️ Contradiction: [old-source] says X; [new-source] says Y." The user will resolve it with ` + "`anvil lint`" + `.
 - Update the frontmatter's ` + "`updated`" + ` field to today's date (YYYY-MM-DD).
 - Return the full updated page, frontmatter + body, as raw markdown. Do NOT wrap in a code fence.
-
+` + slugCatalogBlock + `
 Existing page:
 ---
 {{.ExistingPage}}

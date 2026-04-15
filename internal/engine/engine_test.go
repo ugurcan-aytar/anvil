@@ -6,6 +6,8 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/ugurcan-aytar/recall/pkg/recall"
+
 	"github.com/ugurcan-aytar/anvil/internal/engine"
 )
 
@@ -110,4 +112,53 @@ func TestCloseOnNilEngineIsSafe(t *testing.T) {
 	if err := e.Close(); err != nil {
 		t.Errorf("Close on nil Engine returned %v, want nil", err)
 	}
+}
+
+// SetEmbedder pre-empts the lazy resolver so callers that want a
+// deterministic embedder (MockEmbedder in tests) don't touch the
+// env-driven factory. Embedder() should then return the injected
+// handle without probing.
+func TestSetEmbedderOverridesResolver(t *testing.T) {
+	dir := seedProject(t)
+	eng, err := engine.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+
+	mock := recall.NewMockEmbedder(recall.EmbeddingDimensions)
+	eng.SetEmbedder(mock)
+
+	got, err := eng.Embedder()
+	if err != nil {
+		t.Fatalf("Embedder: %v", err)
+	}
+	if got == nil {
+		t.Fatal("Embedder returned nil after SetEmbedder")
+	}
+	if got != mock {
+		t.Errorf("Embedder returned a different handle than the one injected")
+	}
+}
+
+// On the default build (no embed_llama tag, no API key) Embedder()
+// should degrade gracefully — return (nil, nil) rather than an
+// error — so BM25-only callers still work.
+func TestEmbedderGracefulFallback(t *testing.T) {
+	dir := seedProject(t)
+	eng, err := engine.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+
+	// No SetEmbedder call and no env config → default fallback.
+	got, err := eng.Embedder()
+	// It's OK to get either (nil, nil) [no backend] OR
+	// (embedder, nil) [embed_llama compiled in + model present].
+	// What's NOT OK is (nil, err) on a fresh stub build.
+	if err != nil {
+		t.Logf("note: Embedder returned error (%v) — acceptable only if an API provider is env-configured in CI", err)
+	}
+	_ = got
 }

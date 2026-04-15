@@ -115,6 +115,18 @@ func runIngest(ctx context.Context, args []string, opts ingestOptions) error {
 		if _, err := eng.Recall().Index(); err != nil {
 			fmt.Fprintf(os.Stderr, "reindex collections: %v\n", err)
 		}
+		// Vector embed pass — makes `anvil ask` hybrid search
+		// pick up the newly-written chunks. Opt-in: we only
+		// embed when the engine has a usable Embedder; missing
+		// backends (default build + no API provider) silently
+		// skip so BM25-only users aren't blocked.
+		if emb, err := eng.Embedder(); err == nil && emb != nil {
+			if res, err := eng.Recall().Embed(emb, false); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: embedding refresh failed: %v\n", err)
+			} else if res != nil && res.Embedded > 0 {
+				fmt.Printf("Embedded %d chunk(s) (of %d total).\n", res.Embedded, res.Total)
+			}
+		}
 	}
 
 	fmt.Println()
@@ -169,10 +181,19 @@ func ingestOne(
 	fmt.Printf("Processing %s...\n", relPath)
 	started := time.Now()
 
+	// Feed the current slug catalog to the LLM so it re-uses
+	// canonical forms ("nocodedevs" not "nocode-devs"). Failures
+	// here degrade to nil — the prompt template skips the section
+	// and the ingest still runs.
+	var existingSlugs []string
+	if cat, err := ingest.LoadSlugCatalog(wikiDir); err == nil {
+		existingSlugs = cat.Slugs()
+	}
 	source := ingest.Source{
-		Path:    relPath,
-		Title:   sourceTitle(relPath, raw),
-		Content: stripLeadingFrontmatter(string(raw)),
+		Path:          relPath,
+		Title:         sourceTitle(relPath, raw),
+		Content:       stripLeadingFrontmatter(string(raw)),
+		ExistingSlugs: existingSlugs,
 	}
 
 	extraction, err := ingest.Extract(ctx, client, source)

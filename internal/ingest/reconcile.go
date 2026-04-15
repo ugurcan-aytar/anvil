@@ -76,6 +76,15 @@ func Reconcile(extraction *Extraction, wikiDir, sourcePath string) (*ReconcileRe
 		items = append(items, namedItem{Name: c.Name, Description: c.Description, Kind: "concept"})
 	}
 
+	// Load the existing-slug catalog once so fuzzy matching can
+	// collapse drift ("nocode-devs" → "nocodedevs"). Errors from
+	// list-pages bubble — a malformed wiki should fail the ingest,
+	// not silently skip the dedupe pass.
+	catalog, err := LoadSlugCatalog(wikiDir)
+	if err != nil {
+		return nil, err
+	}
+
 	result := &ReconcileResult{}
 	seenSlugs := map[string]struct{}{}
 
@@ -83,7 +92,14 @@ func Reconcile(extraction *Extraction, wikiDir, sourcePath string) (*ReconcileRe
 		if strings.TrimSpace(item.Name) == "" {
 			continue
 		}
-		slug := wiki.SlugFromTitle(item.Name)
+		raw := wiki.SlugFromTitle(item.Name)
+		// Canonical form: if a close existing slug already owns this
+		// concept, map the new name onto that slug so we update the
+		// established page rather than forking a sibling variant.
+		slug := raw
+		if canon, ok := catalog.Canonicalise(strings.TrimSuffix(raw, ".md")); ok {
+			slug = canon + ".md"
+		}
 		if _, dup := seenSlugs[slug]; dup {
 			continue
 		}

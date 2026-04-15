@@ -75,9 +75,10 @@ const DefaultTopK = 10
 // splits hits by collection (wiki vs raw), and loads the full body
 // of each wiki hit for downstream prompt assembly.
 //
-// Passing a nil embedder to recall.SearchHybrid is deliberate —
-// anvil doesn't embed documents in Phase A3, and recall degrades to
-// BM25 gracefully when no embedder or vector rows exist.
+// The engine's lazy embedder is passed through to SearchHybrid. When
+// no embedder is configured (or embedding rows are empty because
+// nothing has been embedded yet), recall degrades to BM25
+// automatically — callers don't have to branch on availability.
 func Query(ctx context.Context, eng *engine.Engine, question string, opts Options) (*Result, error) {
 	_ = ctx // recall's API doesn't thread ctx yet; kept for forward compat.
 	if eng == nil {
@@ -99,10 +100,19 @@ func Query(ctx context.Context, eng *engine.Engine, question string, opts Option
 		searchOpts = append(searchOpts, recall.WithMinScore(opts.MinScore))
 	}
 
-	// nil emb → recall falls back to BM25 (see recall/pkg/recall.go).
-	// Hybrid is the right future default; BM25 today is fine because
-	// there are no anvil embeddings to fuse against.
-	fused, err := eng.Recall().SearchHybrid(nil, question, searchOpts...)
+	// Resolve the embedder via the engine — lazy + cached, so a
+	// second Query in the same invocation reuses the warm handle.
+	// An embedder error (misconfigured API key, GGUF not compiled)
+	// is NOT fatal here; recall handles a nil embedder by running
+	// BM25 only, and we prefer a degraded answer to a hard failure.
+	emb, embErr := eng.Embedder()
+	if embErr != nil {
+		fmt.Fprintf(os.Stderr,
+			"warning: embedder unavailable (%v) — falling back to BM25 only\n", embErr)
+		emb = nil
+	}
+
+	fused, err := eng.Recall().SearchHybrid(emb, question, searchOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("hybrid search: %w", err)
 	}
