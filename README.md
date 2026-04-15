@@ -204,9 +204,7 @@ as a CLI tool.
 Search and retrieval powered by
 [recall](https://github.com/ugurcan-aytar/recall) — local-first hybrid
 search engine (BM25 + vector + RRF fusion, cross-encoder rerank, query
-expansion, HyDE, incremental embedding). recall is the same author's
-project and was itself inspired by [qmd](https://github.com/tobi/qmd)
-by Tobi Lütke.
+expansion, HyDE, incremental embedding).
 
 See also [brain](https://github.com/ugurcan-aytar/brain) for
 retrieval-first Q&A over the same note collections — a complementary
