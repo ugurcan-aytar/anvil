@@ -144,6 +144,18 @@ func runIngest(ctx context.Context, args []string, opts ingestOptions) error {
 				fmt.Printf("Embedded %d chunk(s) (of %d total).\n", res.Embedded, res.Total)
 			}
 		}
+		// Snapshot the wiki so the next `anvil diff` has a baseline
+		// to compare against. Non-fatal — a failed snapshot just
+		// means the next diff will show every page as "Added".
+		snap, snapErr := wiki.CaptureSnapshot(wikiDir)
+		if snapErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: wiki snapshot capture: %v\n", snapErr)
+		} else {
+			snapPath := filepath.Join(eng.ProjectRoot(), engine.DBSubdir, wiki.SnapshotFilename)
+			if err := wiki.SaveSnapshot(snapPath, snap); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: wiki snapshot save: %v\n", err)
+			}
+		}
 	}
 
 	fmt.Println()
