@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"text/template"
 	"time"
@@ -262,13 +263,16 @@ func fillSaveDefaults(p *wiki.Page, rec *lastAnswerRecord) {
 	if strings.TrimSpace(p.Title) == "" {
 		p.Title = strings.TrimSpace(rec.Question)
 	}
-	// Seed Sources with the verified citations from the ask record.
-	// Existing entries in p.Sources (the LLM's own list) stay intact.
-	for _, s := range rec.Sources {
-		if !containsStrCI(p.Sources, s) {
-			p.Sources = append(p.Sources, s)
-		}
-	}
+	// Merge the LLM-written sources with the ask record's citations.
+	// Normalise everything to path form (wiki/slug.md / raw/...)
+	// before the dedup pass — the LLM sometimes emits the raw
+	// "[[slug]]" wikilink form inside the sources list, which would
+	// otherwise produce a duplicate entry alongside the "wiki/slug.md"
+	// path the writer wants.
+	merged := append([]string{}, p.Sources...)
+	merged = append(merged, rec.Sources...)
+	p.Sources = normaliseSourcesList(merged)
+
 	if strings.TrimSpace(p.Created) == "" {
 		p.Created = dateStr
 	}
@@ -277,16 +281,49 @@ func fillSaveDefaults(p *wiki.Page, rec *lastAnswerRecord) {
 	}
 }
 
-// containsStrCI is a case-insensitive membership check. Source
-// strings come from JSON (ask record) and YAML (LLM frontmatter);
-// casing can drift between the two without the data actually
-// differing, so we compare case-folded.
-func containsStrCI(xs []string, target string) bool {
-	lt := strings.ToLower(strings.TrimSpace(target))
-	for _, x := range xs {
-		if strings.ToLower(strings.TrimSpace(x)) == lt {
-			return true
+// wikilinkInSourceRE matches "[[slug]]" entries so normaliseSourcesList
+// can turn them into the canonical "wiki/slug.md" path form.
+var wikilinkInSourceRE = regexp.MustCompile(`^\[\[([^\[\]|]+?)(?:\|[^\[\]]*)?\]\]$`)
+
+// normaliseSourcesList turns a mixed list (wiki path, raw path, stray
+// [[wikilink]] entries) into a clean, deduped list of path-shaped
+// entries. Preserves first-occurrence order so the frontmatter
+// stays readable.
+func normaliseSourcesList(xs []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(xs))
+	for _, s := range xs {
+		norm := normaliseOneSource(s)
+		if norm == "" {
+			continue
 		}
+		key := strings.ToLower(norm)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, norm)
 	}
-	return false
+	return out
 }
+
+// normaliseOneSource converts a single entry into path form.
+// Returns "" for blank / useless entries so the caller can drop them.
+func normaliseOneSource(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.Trim(s, "`\"'")
+	if s == "" {
+		return ""
+	}
+	// "[[slug]]" → "wiki/slug.md"
+	if m := wikilinkInSourceRE.FindStringSubmatch(s); len(m) >= 2 {
+		stem := strings.TrimSpace(m[1])
+		if stem == "" {
+			return ""
+		}
+		stem = strings.TrimSuffix(stem, ".md")
+		return "wiki/" + stem + ".md"
+	}
+	return s
+}
+
