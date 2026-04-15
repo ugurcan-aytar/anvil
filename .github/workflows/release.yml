@@ -92,3 +92,52 @@ jobs:
           else
             gh release create "$TAG" ./* --title "anvil $TAG" --notes "$BODY"
           fi
+
+      # Homebrew tap push — mirrors the recall + brain workflow.
+      # Gracefully skips when HOMEBREW_TAP_GITHUB_TOKEN isn't set so
+      # forks without a tap repo don't fail the release.
+      - name: Update Homebrew tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        run: |
+          set -euxo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VER="${TAG#v}"
+          DARWIN_SHA=$(shasum -a 256 "release/anvil_${VER}_darwin_arm64.tar.gz" | awk '{print $1}')
+          LINUX_SHA=$(shasum -a 256 "release/anvil_${VER}_linux_amd64.tar.gz" | awk '{print $1}')
+
+          cat > formula.rb <<FORMULA
+          class Anvil < Formula
+            desc "LLM-maintained wiki compiler"
+            homepage "https://github.com/ugurcan-aytar/anvil"
+            license "MIT"
+            version "${VER}"
+
+            if OS.mac? && Hardware::CPU.arm?
+              url "https://github.com/ugurcan-aytar/anvil/releases/download/${TAG}/anvil_${VER}_darwin_arm64.tar.gz"
+              sha256 "${DARWIN_SHA}"
+            elsif OS.linux? && Hardware::CPU.intel?
+              url "https://github.com/ugurcan-aytar/anvil/releases/download/${TAG}/anvil_${VER}_linux_amd64.tar.gz"
+              sha256 "${LINUX_SHA}"
+            end
+
+            def install
+              bin.install "anvil_${VER}_#{OS.mac? ? "darwin_arm64" : "linux_amd64"}/anvil"
+            end
+
+            test do
+              system "#{bin}/anvil", "version"
+            end
+          end
+          FORMULA
+
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/ugurcan-aytar/homebrew-anvil.git" tap
+          mkdir -p tap/Formula
+          cp formula.rb tap/Formula/anvil.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "anvil ${VER}" || echo "no-op — formula already current"
+          git push

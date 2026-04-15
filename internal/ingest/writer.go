@@ -44,12 +44,12 @@ func Write(ctx context.Context, client llm.Client, result *ReconcileResult, wiki
 		dateStr = time.Now().Format("2006-01-02")
 	}
 
-	// Load the slug catalog once so every page in this batch sees
-	// the same vocabulary. The catalog does NOT update as new pages
-	// land during the batch — that's deliberate: forking the
-	// catalog per draft would be O(N²) disk reads and bring little
-	// benefit since the cross-page references within a single
-	// source tend to use the draft slugs the LLM already knows.
+	// Build the slug catalog once. We merge in every slug this
+	// batch is ABOUT to create so same-source siblings can reference
+	// each other via canonical slugs even when they haven't been
+	// written to disk yet. Without this, the first batch's pages
+	// would all see an empty catalog and drift into variant forms
+	// (e.g. [[no-code-devs]] pointing at nocodedevs.md).
 	cat, err := LoadSlugCatalog(wikiDir)
 	if err != nil {
 		report.Errors = append(report.Errors, fmt.Errorf("slug catalog: %w", err))
@@ -58,6 +58,18 @@ func Write(ctx context.Context, client llm.Client, result *ReconcileResult, wiki
 		cat = nil
 	}
 	existingSlugs := cat.Slugs()
+	for _, d := range result.Create {
+		stem := strings.TrimSuffix(d.Slug, ".md")
+		if stem != "" && !containsStr(existingSlugs, stem) {
+			existingSlugs = append(existingSlugs, stem)
+		}
+	}
+	for _, u := range result.Update {
+		stem := strings.TrimSuffix(u.Slug, ".md")
+		if stem != "" && !containsStr(existingSlugs, stem) {
+			existingSlugs = append(existingSlugs, stem)
+		}
+	}
 
 	for _, draft := range result.Create {
 		slug, err := writeCreate(ctx, client, draft, wikiDir, dateStr, existingSlugs)
