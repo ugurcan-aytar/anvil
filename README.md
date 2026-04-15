@@ -1,6 +1,26 @@
-# anvil
+<div align="center">
 
-**LLM-maintained wiki compiler.** Drop in sources, get a structured, interlinked wiki.
+<pre>
+          ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+          ████████████████████▄
+          ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                  ██████
+                  ██████
+             ▄▄▄▄▄██████▄▄▄▄▄
+             ████████████████████
+             ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+  █████╗ ███╗   ██╗██╗   ██╗██╗██╗
+ ██╔══██╗████╗  ██║██║   ██║██║██║
+ ███████║██╔██╗ ██║██║   ██║██║██║
+ ██╔══██║██║╚██╗██║╚██╗ ██╔╝██║██║
+ ██║  ██║██║ ╚████║ ╚████╔╝ ██║███████╗
+ ╚═╝  ╚═╝╚═╝  ╚═══╝  ╚═══╝  ╚═╝╚══════╝
+</pre>
+
+### LLM-maintained wiki compiler
+
+Drop in sources, get a structured, interlinked wiki.<br>
 Source-grounded, compounding knowledge. Single Go binary.
 
 [![Go Version](https://img.shields.io/badge/go-1.24%2B-00ADD8)](https://go.dev/)
@@ -8,6 +28,8 @@ Source-grounded, compounding knowledge. Single Go binary.
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](#install)
 [![CI](https://github.com/ugurcan-aytar/anvil/actions/workflows/ci.yml/badge.svg)](https://github.com/ugurcan-aytar/anvil/actions/workflows/ci.yml)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
+
+</div>
 
 ---
 
