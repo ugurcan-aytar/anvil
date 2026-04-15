@@ -44,6 +44,7 @@ func init() {
 	rootCmd.AddCommand(doctorCmd)
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(diffCmd)
+	rootCmd.AddCommand(exportCmd)
 }
 
 // Verbosity levels. Subcommands read `verbosity` (set by

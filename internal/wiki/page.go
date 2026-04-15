@@ -213,6 +213,11 @@ func SlugFromTitle(title string) string {
 // emits them.
 var wikilinkRE = regexp.MustCompile(`\[\[([^\[\]|]+)(?:\|[^\[\]]*)?\]\]`)
 
+// WikilinkRegexp returns the compiled [[wikilink]] regex so other
+// packages (export renderer, graph generator) can walk or rewrite
+// the same shape ExtractWikilinks consumes.
+func WikilinkRegexp() *regexp.Regexp { return wikilinkRE }
+
 // ExtractWikilinks returns a deduplicated slice of wikilink targets
 // found in body. Each target is the raw text between the double
 // brackets (pipe-aliased links strip the display portion). Results
