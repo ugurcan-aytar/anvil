@@ -95,6 +95,13 @@ func resolveInitTarget(args []string) (string, error) {
 // opens the recall engine once so .anvil/index.db is created and
 // both collections are registered.
 func initProject(target string) error {
+	// Defence in depth: resolveInitTarget already guards the CLI
+	// entry points, but direct callers (e.g. integration tests)
+	// shouldn't be able to silently clobber an existing project.
+	if _, err := os.Stat(filepath.Join(target, "ANVIL.md")); err == nil {
+		return fmt.Errorf("anvil project already exists at %s", target)
+	}
+
 	// Create directory tree. `raw/.gitkeep` so git retains the
 	// empty folder; wiki/ will hold index.md + log.md straight
 	// away so it stays non-empty too.
