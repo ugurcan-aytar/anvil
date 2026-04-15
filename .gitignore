@@ -1,0 +1,44 @@
+# Binaries — anchored so we don't accidentally hide cmd/anvil/ or
+# any future internal/anvil/ package directory.
+/anvil
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Build artefacts
+/dist/
+/build/
+
+# Dependencies
+/vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+coverage.out
+*.test
+
+# SQLite (recall index DBs, including project-local .anvil/index.db in user
+# projects the binary manages — keep these out of anvil's own repo)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Models (GGUF files downloaded by recall for local embed/rerank)
+*.gguf
+
+# Private working files — NEVER commit. Listed in CLAUDE.md's
+# "never commit" rule and mirrored here for safety.
+CLAUDE.md
+ROADMAP.md
+.claude/

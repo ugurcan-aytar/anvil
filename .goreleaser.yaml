@@ -1,0 +1,57 @@
+version: 2
+project_name: anvil
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: anvil
+    main: ./cmd/anvil
+    binary: anvil
+    env:
+      - CGO_ENABLED=1
+    tags:
+      - sqlite_fts5
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/ugurcan-aytar/anvil/internal/commands.Version={{.Version}}
+      - -X github.com/ugurcan-aytar/anvil/internal/commands.Commit={{.ShortCommit}}
+      - -X github.com/ugurcan-aytar/anvil/internal/commands.BuildDate={{.Date}}
+
+archives:
+  - id: anvil
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ .Tag }}-SNAPSHOT-{{ .ShortCommit }}"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+release:
+  draft: true
+  prerelease: auto
