@@ -265,6 +265,110 @@ Body.
 // renderClaimsBullets / renderConnectionsBullets empty-list sentinel.
 // ============================================================
 
+// Regression guard for the Claude-CLI preamble leak found during
+// the ZeroToMarketing real-world test. The LLM sometimes prepends
+// "Here is the wiki page for X:" / "I need write permission…" /
+// "I'll create the page…" before the frontmatter. stripPreamble
+// must drop that chatter so ParsePage sees the real frontmatter
+// instead of falling into the body-only branch and leaving the
+// writer stage to prepend a duplicate block.
+func TestWriteStripsLLMPreamble(t *testing.T) {
+	wikiDir := emptyWiki(t)
+
+	llmOutput := `Here is the wiki page for ` + "`circuit-breaker.md`" + `:
+
+---
+title: Circuit Breaker
+type: concept
+sources:
+  - raw/cb.md
+related:
+  - retry-pattern
+created: 2026-04-16
+updated: 2026-04-16
+---
+
+Circuit breakers stop cascading failures.
+`
+	client := &scriptedClient{Responses: []string{llmOutput}}
+	result := &ReconcileResult{
+		Create: []PageDraft{{
+			Slug:       "circuit-breaker.md",
+			Name:       "Circuit Breaker",
+			Type:       "concept",
+			SourcePath: "raw/cb.md",
+		}},
+	}
+	report := Write(context.Background(), client, result, wikiDir, fixedTime)
+	if len(report.Errors) > 0 {
+		t.Fatalf("errors: %v", report.Errors)
+	}
+	raw, err := os.ReadFile(filepath.Join(wikiDir, "circuit-breaker.md"))
+	if err != nil {
+		t.Fatalf("page missing: %v", err)
+	}
+	// Exactly two "---" delimiters (one open + one close) — not four.
+	// Four would mean two nested frontmatter blocks, our regression.
+	if got := strings.Count(string(raw), "\n---\n"); got != 0 && strings.Count(string(raw), "---") > 2 {
+		// The open delimiter is at file start so the "\n---\n"
+		// count starts at 0 for a well-formed page. The literal
+		// "---" count should be exactly 2 (open + close).
+		t.Errorf("page has %d '---' delimiters — duplicate frontmatter likely; body:\n%s",
+			strings.Count(string(raw), "---"), raw)
+	}
+	// Body preserved, preamble gone.
+	body := string(raw)
+	if strings.Contains(body, "Here is the wiki page") {
+		t.Errorf("LLM preamble leaked into page; body:\n%s", body)
+	}
+	if !strings.Contains(body, "Circuit breakers stop cascading failures.") {
+		t.Errorf("body content dropped; body:\n%s", body)
+	}
+	// Round-trip through ParsePage to prove only one frontmatter
+	// block is present and well-formed.
+	parsed, err := wiki.ParsePage(raw)
+	if err != nil {
+		t.Fatalf("written page fails to re-parse: %v", err)
+	}
+	if parsed.Title != "Circuit Breaker" {
+		t.Errorf("round-trip Title = %q", parsed.Title)
+	}
+	if !containsStr(parsed.Related, "retry-pattern") {
+		t.Errorf("LLM-specified related dropped: %v", parsed.Related)
+	}
+	if strings.Contains(parsed.Body, "---") {
+		t.Errorf("body still contains a frontmatter delimiter — means outer parse missed the real one:\n%s",
+			parsed.Body)
+	}
+}
+
+// stripPreamble directly — covers chatter variants we've observed.
+func TestStripPreambleDropsChatterBeforeFrontmatter(t *testing.T) {
+	cases := map[string]string{
+		"simple preamble":        "Here is the page:\n\n---\ntitle: X\n---\nBody\n",
+		"permission-error leak":  "I need write permission to create the file.\n\n---\ntitle: X\n---\nBody\n",
+		"\"I'll create\" leak":    "I'll create the page for you:\n---\ntitle: X\n---\nBody\n",
+		"already-clean":          "---\ntitle: X\n---\nBody\n",
+		"no frontmatter at all":  "just prose, no frontmatter at all",
+	}
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := stripPreamble(raw)
+			if strings.Contains(raw, "---") {
+				// Output should start with "---" after the strip.
+				if !strings.HasPrefix(strings.TrimLeft(got, " \t\r\n"), "---") {
+					t.Errorf("stripped output should start at the frontmatter; got:\n%s", got)
+				}
+			} else {
+				// No frontmatter → pass through unchanged.
+				if got != raw {
+					t.Errorf("no-frontmatter input mutated: %q → %q", raw, got)
+				}
+			}
+		})
+	}
+}
+
 func TestRenderBulletsEmptyYieldsNone(t *testing.T) {
 	if got := renderClaimsBullets(nil); got != "(none)" {
 		t.Errorf("empty claims = %q", got)

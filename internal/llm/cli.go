@@ -56,7 +56,15 @@ func (c *cliClient) Complete(ctx context.Context, system, user string) (string, 
 	if bin == "" {
 		bin = claudeBinary()
 	}
-	args := []string{"-p", "--no-session-persistence"}
+	// `--tools ""` forces the CLI into text-only mode. Without it
+	// claude tries to fulfil "write a wiki page" by calling its
+	// Write tool, fails the sandbox permission check, and leaks
+	// the failure message into the response ("I need write
+	// permission to create the file…"). That garbage then lands
+	// in the wiki page body via the ingest writer. Explicitly
+	// disabling tools is the root-cause fix; callers want text,
+	// not a remote write.
+	args := []string{"-p", "--no-session-persistence", "--tools", ""}
 	if strings.TrimSpace(system) != "" {
 		args = append(args, "--system-prompt", system)
 	}

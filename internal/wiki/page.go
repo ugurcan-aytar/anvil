@@ -239,6 +239,11 @@ func ExtractWikilinks(body string) []string {
 // frontmatter block parse as Page{Body: string(raw)} — callers that
 // need frontmatter should check the zero value on Title / Type.
 func parsePage(raw []byte) (*Page, error) {
+	// Leading whitespace shouldn't bump us off the frontmatter
+	// branch — LLM replies (especially from the Claude CLI
+	// backend) occasionally ship a stray leading "\n" before the
+	// opening "---". Trim it so the detector sees a clean start.
+	raw = bytes.TrimLeft(raw, " \t\r\n")
 	sc := bufio.NewScanner(bytes.NewReader(raw))
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 

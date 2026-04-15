@@ -84,7 +84,7 @@ func writeCreate(ctx context.Context, client llm.Client, draft PageDraft, wikiDi
 	if err != nil {
 		return "", fmt.Errorf("llm write call: %w", err)
 	}
-	page, err := wiki.ParsePage([]byte(stripFence(raw)))
+	page, err := wiki.ParsePage([]byte(stripPreamble(stripFence(raw))))
 	if err != nil {
 		return "", fmt.Errorf("parse llm output: %w", err)
 	}
@@ -120,7 +120,7 @@ func writeUpdate(ctx context.Context, client llm.Client, upd PageUpdate, wikiDir
 	if err != nil {
 		return "", fmt.Errorf("llm update call: %w", err)
 	}
-	page, err := wiki.ParsePage([]byte(stripFence(raw)))
+	page, err := wiki.ParsePage([]byte(stripPreamble(stripFence(raw))))
 	if err != nil {
 		return "", fmt.Errorf("parse llm output: %w", err)
 	}
@@ -232,6 +232,29 @@ func renderConnectionsBullets(conns []Connection) string {
 		fmt.Fprintf(&b, "- %s %s %s\n", c.From, rel, c.To)
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// stripPreamble drops any chatter the LLM wrote BEFORE the opening
+// frontmatter delimiter. The prompt asks for raw markdown starting
+// with "---", but some backends (especially Claude CLI) occasionally
+// lead with "Here is the wiki page for X:" or a permission-error
+// message before the real page. Without this, ParsePage would miss
+// the frontmatter and the whole response would land in Page.Body,
+// producing a duplicate-frontmatter page after fillCreateDefaults
+// re-adds its own block.
+//
+// Strategy: find the first line that's exactly "---" (frontmatter
+// opener) and slice from there. If no such line exists, return raw
+// unchanged — the response genuinely has no frontmatter, the
+// body-only branch of ParsePage is the right outcome.
+func stripPreamble(raw string) string {
+	lines := strings.Split(raw, "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "---" {
+			return strings.Join(lines[i:], "\n")
+		}
+	}
+	return raw
 }
 
 // stripFence pulls the markdown payload out of a ``` fenced block

@@ -206,3 +206,34 @@ func TestParsePageNoFrontmatterIsBodyOnly(t *testing.T) {
 		t.Errorf("body lost: %q", p.Body)
 	}
 }
+
+// Regression guard for the duplicate-frontmatter bug found during
+// the ZeroToMarketing real-world test. Raw LLM replies sometimes
+// carry a leading "\n" (stray blank line before the frontmatter).
+// Without leading-whitespace trimming, parsePage fell through to
+// the body-only branch and the whole reply got re-wrapped with a
+// second frontmatter by the writer stage.
+func TestParsePageToleratesLeadingWhitespace(t *testing.T) {
+	cases := map[string]string{
+		"leading \\n":   "\n---\ntitle: Trim\ntype: concept\n---\n\nBody.\n",
+		"leading CRLF":  "\r\n---\ntitle: Trim\ntype: concept\n---\n\nBody.\n",
+		"leading space": "   \n---\ntitle: Trim\ntype: concept\n---\n\nBody.\n",
+	}
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			p, err := ParsePage([]byte(raw))
+			if err != nil {
+				t.Fatalf("ParsePage: %v", err)
+			}
+			if p.Title != "Trim" {
+				t.Errorf("Title = %q, want Trim (leading whitespace should not send us to body-only branch)", p.Title)
+			}
+			if p.Type != "concept" {
+				t.Errorf("Type = %q, want concept", p.Type)
+			}
+			if !strings.Contains(p.Body, "Body.") {
+				t.Errorf("body = %q", p.Body)
+			}
+		})
+	}
+}
