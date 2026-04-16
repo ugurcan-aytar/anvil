@@ -28,6 +28,11 @@ type ingestOptions struct {
 	// Force ignores the content-hash cache: every file is re-ingested
 	// even when its bytes match a prior ingest.
 	Force bool
+	// Workers is the maximum number of source files whose Extract
+	// call can run concurrently. 1 (default) keeps the pre-v0.2.7
+	// sequential behaviour. Reconcile + write stay sequential in
+	// both modes because they mutate the wiki dir + DB.
+	Workers int
 }
 
 var ingestOpts ingestOptions
@@ -58,6 +63,8 @@ func init() {
 		"extract + reconcile only; do not call the LLM writer or persist pages")
 	ingestCmd.Flags().BoolVarP(&ingestOpts.Force, "force", "f", false,
 		"ignore the content-hash cache and re-ingest every file")
+	ingestCmd.Flags().IntVarP(&ingestOpts.Workers, "workers", "w", 1,
+		"max concurrent Extract calls (reconcile + write stay sequential)")
 }
 
 // runIngest is the ingest entry point. Visible to the commands package
@@ -109,17 +116,27 @@ func runIngest(ctx context.Context, args []string, opts ingestOptions) error {
 	counterFmt := fmt.Sprintf("[%%%dd/%%d] ", padWidth)
 
 	summary := ingestSummary{}
-	for i, relPath := range files {
-		absPath := filepath.Join(eng.ProjectRoot(), relPath)
-		if verbosity >= VerbosityNormal {
-			fmt.Printf(counterFmt, i+1, len(files))
+	workers := opts.Workers
+	if workers < 1 {
+		workers = 1
+	}
+	if workers == 1 {
+		// Sequential path — preserves the v0.2.6 behaviour byte-for-byte.
+		for i, relPath := range files {
+			absPath := filepath.Join(eng.ProjectRoot(), relPath)
+			if verbosity >= VerbosityNormal {
+				fmt.Printf(counterFmt, i+1, len(files))
+			}
+			if err := ingestOne(ctx, client, dbPath, wikiDir, relPath, absPath, opts, &summary); err != nil {
+				fmt.Fprintf(os.Stderr, "  ! %s: %v\n", relPath, err)
+				summary.Errors++
+			}
 		}
-		if err := ingestOne(ctx, client, dbPath, wikiDir, relPath, absPath, opts, &summary); err != nil {
-			// Per-file error: print and keep going so a single
-			// malformed source doesn't abort the batch.
-			fmt.Fprintf(os.Stderr, "  ! %s: %v\n", relPath, err)
-			summary.Errors++
-		}
+	} else {
+		// Parallel path — extract runs concurrently, reconcile + write
+		// + log + print stay serial behind ingestMutex. Per-file output
+		// therefore stays coherent; only the hidden LLM I/O interleaves.
+		summary = runIngestConcurrent(ctx, client, dbPath, wikiDir, files, opts, workers, counterFmt)
 	}
 	batchElapsed := time.Since(batchStart).Round(time.Second)
 
