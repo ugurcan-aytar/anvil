@@ -80,20 +80,33 @@ export ANTHROPIC_API_KEY=sk-ant-…
 anvil init my-research
 cd my-research
 
-# Drop a source — any markdown / text file
-cp ~/reading/interesting-paper.md raw/
+# Drop some sources — any markdown / text files
+cp ~/reading/*.md raw/
 
-# Let the LLM read it and update the wiki
-anvil ingest raw/interesting-paper.md
+# Let the LLM read them and update the wiki. --workers 3 runs
+# three Extract calls in parallel.
+anvil ingest raw/ --workers 3
 
-# Ask a question — hits the wiki first, raw second, synthesises an answer
+# What just landed?
+anvil status
+anvil diff          # changes since last ingest
+anvil lint          # orphans, broken links, contradictions
+
+# Ask a question — hits the wiki first, raw second, synthesises
+# a cited answer
 anvil ask "what are the main claims?"
+# → prompts "Save this answer to wiki? (y/N)"
 
-# Save the answer as a new wiki page (synthesis layer)
+# Or save the last answer later
 anvil save
 
-# Check wiki health — orphan pages, broken links, contradictions
-anvil lint
+# Browse offline
+anvil export --output ./site     # static HTML site
+anvil graph                      # interactive d3 force graph
+
+# While working on raw/, run watch in another terminal — every new
+# file triggers ingest automatically
+anvil watch
 ```
 
 ---
@@ -102,14 +115,58 @@ anvil lint
 
 | Command | What it does |
 |---|---|
-| `anvil init [name]` | Create project: `raw/`, `wiki/`, `ANVIL.md`, `wiki/index.md`, `wiki/log.md`, `.anvil/index.db` |
-| `anvil ingest <file>` | Read source → LLM extracts entities / concepts / claims → creates or updates wiki pages → refreshes index + log |
-| `anvil ask "<question>"` | Search wiki first (compiled knowledge), then raw (primary sources), synthesise a cited answer |
-| `anvil save` | Persist the last `ask` answer as a new wiki page |
-| `anvil lint` | Detect orphan pages, broken cross-references, contradictions, stale claims, missing pages |
-| `anvil search "<query>"` | Raw recall search across `wiki/` + `raw/` collections — no LLM, for debugging retrieval |
-| `anvil status` | Wiki health: page count, source count, cross-ref density, orphan count, last ingest timestamp |
+| `anvil init [path]` | Create project: `raw/`, `wiki/`, `ANVIL.md`, `wiki/index.md`, `wiki/log.md`, `.anvil/index.db` |
+| `anvil ingest <file\|dir\|glob>` | Read sources → LLM extracts entities / concepts / claims → creates or updates wiki pages → refreshes index + vector embeddings + log |
+| `anvil ask "<question>"` | Hybrid BM25 + vector search (wiki first, raw second), LLM synthesises a cited answer, offers to save |
+| `anvil save` | Persist the last `ask` answer as a synthesis wiki page |
+| `anvil lint` | Detect orphans, broken cross-references, contradictions, stale claims, missing pages; suggest improvements |
+| `anvil search "<query>"` | Raw BM25 + vector search across `wiki/` + `raw/` — no LLM, for debugging retrieval |
+| `anvil status` | Wiki stats: pages / sources / cross-ref density / DB size |
+| `anvil doctor` | Pipeline health: project layout, DB, embedder, LLM backend, ANVIL.md, index sync |
+| `anvil diff` | Wiki changes since last ingest (added / modified / deleted pages) |
+| `anvil export` | Export wiki as a standalone static HTML site |
+| `anvil graph` | Interactive d3 force-directed graph of the wiki's cross-references |
+| `anvil watch` | Watch `raw/` and auto-ingest new / modified files |
+| `anvil config` | Read / write project-local settings in `.anvil/config.json` |
 | `anvil version` | Print version, commit, build date, Go version, OS/arch |
+
+### Shared flags
+
+| Flag | Purpose |
+|---|---|
+| `--project <dir>` | Project directory (default `.`) |
+| `--no-color` | Disable ANSI colour |
+| `-v, --verbose` | Extra output: LLM prompt/response snippets + per-call timings |
+| `-q, --quiet` | Only summary + errors (overrides `--verbose`) |
+
+### Command-specific flags
+
+| Command | Flag | Purpose |
+|---|---|---|
+| `ingest` | `--dry-run` | Extract + reconcile only; skip the LLM write pass |
+| `ingest` | `-f, --force` | Ignore content-hash cache, re-ingest every file |
+| `ingest` | `-w, --workers <N>` | Max concurrent Extract calls (default 1) |
+| `ask` | `-c, --collection <wiki\|raw>` | Narrow retrieval to one collection (default both) |
+| `ask` | `-n <N>` | Cap combined hit count (default 10) |
+| `ask` | `--no-save` | Skip the "Save this answer?" prompt |
+| `save` | `--name <slug>` | Override the LLM-suggested filename |
+| `lint` | `--structural-only` | Skip LLM-backed checks (fast; CI-friendly) |
+| `lint` | `--fix` | Apply safe auto-fixes (rebuild wiki/index.md) |
+| `search` | `-c, --collection <wiki\|raw>` | Narrow search scope |
+| `search` | `-n <N>` | Result limit |
+| `export` | `-o, --output <dir>` | Output directory (default `./anvil-export`) |
+| `export` | `--title <str>` | Site title (default project dir name) |
+| `graph` | `-o, --output <file>` | HTML path (default `./anvil-graph.html`) |
+| `graph` | `--no-open` | Don't auto-open in browser |
+| `watch` | `--debounce <ms>` | Collapse burst events (default 500) |
+| `watch` | `-w, --workers <N>` | Ingest concurrency during auto-trigger |
+
+### Project config
+
+`anvil config set <key> <value>` writes `.anvil/config.json`. Priority:
+**CLI flag > env var > config.json > hardcoded default**.
+
+Keys: `model`, `topk`, `min-score`, `workers`, `auto-save`, `debounce`.
 
 ---
 
@@ -119,12 +176,13 @@ anvil lint
 anvil/
 ├── cmd/anvil/         # CLI entry point (thin main.go — ≤15 lines)
 ├── internal/
-│   ├── commands/      # One Cobra command per file
-│   ├── wiki/          # Wiki CRUD: page create/update, index, log, graph, frontmatter
-│   ├── ingest/        # Source → wiki transformation pipeline
-│   ├── lint/          # Wiki health checks
-│   ├── llm/           # LLM integration (Anthropic + OpenAI-compat + CLI fallback)
-│   └── schema/        # ANVIL.md parsing and validation
+│   ├── commands/      # One Cobra command per file + verbosity / config helpers
+│   ├── wiki/          # Wiki CRUD: page, frontmatter, index, log, graph, snapshot
+│   ├── ingest/        # Source → wiki pipeline: extract, reconcile, writer, cache, slugs
+│   ├── query/         # Wiki-first retrieval + answer synthesis + citation verification
+│   ├── lint/          # Structural + LLM health checks, health score, suggestions
+│   ├── llm/           # Anthropic REST / OpenAI-compat / Claude CLI backends + MockClient
+│   └── engine/        # recall.Engine wrapper: project-local DB, collections, lazy embedder
 └── go.mod             # imports recall as a Go library
 ```
 
@@ -144,7 +202,10 @@ same directory.
 
 ### Homebrew (macOS & Linux)
 
-Lands in v0.2.0. Until then, use source build or prebuilt tarball.
+```bash
+brew tap ugurcan-aytar/anvil
+brew install anvil
+```
 
 ### Pre-built binary
 
